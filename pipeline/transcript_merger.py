@@ -1,377 +1,48 @@
-import json
-import re
-from pathlib import Path
+# pipeline/transcript_merger.py
+import logging
+from typing import List, Dict, Any
 
+logger = logging.getLogger(__name__)
 
-# ============================================================
-# SPEAKER LOADING
-# ============================================================
+def get_intersection(start1: float, end1: float, start2: float, end2: float) -> float:
+    """Calculates the temporal overlap between two time segments."""
+    return max(0, min(end1, end2) - max(start1, start2))
 
-def load_speaker_segments(
-    speaker_file
-):
+def align_transcript_with_speakers(
+    whisper_segments: List[Dict[str, Any]], 
+    pyannote_segments: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """
-    Load speaker diarization segments.
-
-    Expected format:
-
-    [0.000 --> 4.500] SPEAKER_00
-
-    Returns:
-
-    [
-        {
-            "speaker": "SPEAKER_00",
-            "start": 0.0,
-            "end": 4.5
-        }
-    ]
+    Fuses Whisper ASR segments with Pyannote diarization boundaries.
+    whisper_segments format: [{'start': 0.0, 'end': 2.5, 'text': 'Hello'}]
+    pyannote_segments format: [{'start': 0.0, 'end': 3.0, 'speaker': 'SPEAKER_00'}]
     """
-
-    speaker_path = Path(
-        speaker_file
-    )
-
-    if not speaker_path.exists():
-
-        raise FileNotFoundError(
-            f"Speaker file not found: {speaker_path}"
-        )
-
-    speakers = []
-
-    pattern = re.compile(
-        r"\[\s*(\d+(?:\.\d+)?)\s*-->\s*(\d+(?:\.\d+)?)\s*\]\s*(\S+)",
-        re.VERBOSE
-    )
-
-    with open(
-        speaker_path,
-        "r",
-        encoding="utf-8"
-    ) as file:
-
-        for line in file:
-
-            match = pattern.search(
-                line
-            )
-
-            if not match:
-                continue
-
-            speakers.append(
-                {
-                    "start": float(
-                        match.group(1)
-                    ),
-                    "end": float(
-                        match.group(2)
-                    ),
-                    "speaker": match.group(3)
-                }
-            )
-
-    if not speakers:
-
-        raise ValueError(
-            "No speaker segments found."
-        )
-
-    return speakers
-
-
-# ============================================================
-# FIND BEST SPEAKER
-# ============================================================
-
-def find_speaker(
-    start_time,
-    end_time,
-    speakers
-):
-    """
-    Find the speaker with the greatest temporal overlap
-    with a Whisper transcript segment.
-    """
-
-    best_speaker = "UNKNOWN"
-
-    best_overlap = 0.0
-
-    for segment in speakers:
-
-        overlap = (
-            min(
-                end_time,
-                segment["end"]
-            )
-            -
-            max(
-                start_time,
-                segment["start"]
-            )
-        )
-
-        if overlap > best_overlap:
-
-            best_overlap = overlap
-
-            best_speaker = (
-                segment["speaker"]
-            )
-
-    return best_speaker
-
-
-# ============================================================
-# MERGE TRANSCRIPT
-# ============================================================
-
-def merge_transcript(
-    transcript_file,
-    speaker_file
-):
-    """
-    Merge Whisper transcript segments with PyAnnote
-    speaker information.
-
-    Returns:
-
-    [
-        {
-            "speaker": "SPEAKER_00",
-            "start": 0.0,
-            "end": 4.5,
-            "text": "Hello everyone."
-        }
-    ]
-    """
-
-    transcript_path = Path(
-        transcript_file
-    )
-
-    if not transcript_path.exists():
-
-        raise FileNotFoundError(
-            f"Transcript file not found: "
-            f"{transcript_path}"
-        )
-
-    # --------------------------------------------------------
-    # Load Whisper JSON
-    # --------------------------------------------------------
-
-    with open(
-        transcript_path,
-        "r",
-        encoding="utf-8"
-    ) as file:
-
-        transcript = json.load(
-            file
-        )
-
-    # --------------------------------------------------------
-    # Load speakers
-    # --------------------------------------------------------
-
-    speakers = load_speaker_segments(
-        speaker_file
-    )
-
-    merged_segments = []
-
-    whisper_segments = (
-        transcript.get(
-            "segments",
-            []
-        )
-    )
-
-    if not whisper_segments:
-
-        raise ValueError(
-            "No Whisper transcript segments found."
-        )
-
-    # --------------------------------------------------------
-    # Match segments
-    # --------------------------------------------------------
-
-    for segment in whisper_segments:
-
-        start = float(
-            segment["start"]
-        )
-
-        end = float(
-            segment["end"]
-        )
-
-        text = (
-            segment.get(
-                "text",
-                ""
-            )
-            .strip()
-        )
-
-        if not text:
-            continue
-
-        speaker = find_speaker(
-            start,
-            end,
-            speakers
-        )
-
-        merged_segments.append(
-            {
-                "speaker": speaker,
-                "start": start,
-                "end": end,
-                "text": text
-            }
-        )
-
-    return merged_segments
-
-
-# ============================================================
-# SAVE JSON
-# ============================================================
-
-def save_merged_json(
-    segments,
-    output_file
-):
-    """
-    Save merged transcript as JSON.
-    """
-
-    output_path = Path(
-        output_file
-    )
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    with open(
-        output_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            segments,
-            file,
-            indent=4,
-            ensure_ascii=False
-        )
-
-    return output_path
-
-
-# ============================================================
-# SAVE TEXT
-# ============================================================
-
-def save_merged_text(
-    segments,
-    output_file
-):
-    """
-    Save a human-readable speaker-aware transcript.
-    """
-
-    output_path = Path(
-        output_file
-    )
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    with open(
-        output_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        file.write(
-            "=== DISCUSSION TRANSCRIPT ===\n\n"
-        )
-
-        for segment in segments:
-
-            file.write(
-                f"[{segment['start']:.2f}s - "
-                f"{segment['end']:.2f}s]\n"
-            )
-
-            file.write(
-                f"{segment['speaker']}\n"
-            )
-
-            file.write(
-                f"{segment['text']}\n\n"
-            )
-
-    return output_path
-
-
-# ============================================================
-# CONVENIENCE FUNCTION
-# ============================================================
-
-def build_merged_transcript(
-    transcript_file="transcripts/transcript.json",
-    speaker_file="transcripts/speakers.txt",
-    json_output="analysis/merged_transcript.json",
-    text_output="analysis/merged_transcript.txt"
-):
-    """
-    Complete transcript merging step.
-
-    Produces both:
-
-        merged_transcript.json
-        merged_transcript.txt
-
-    Returns:
-        list of merged segments
-    """
-
-    segments = merge_transcript(
-        transcript_file,
-        speaker_file
-    )
-
-    save_merged_json(
-        segments,
-        json_output
-    )
-
-    save_merged_text(
-        segments,
-        text_output
-    )
-
-    print(
-        f"Merged {len(segments)} transcript segments."
-    )
-
-    print(
-        f"JSON saved: {json_output}"
-    )
-
-    print(
-        f"Text saved: {text_output}"
-    )
-
-    return segments
+    aligned_transcript = []
+
+    for w_seg in whisper_segments:
+        w_start = w_seg['start']
+        w_end = w_seg['end']
+        w_text = w_seg['text'].strip()
+        
+        best_speaker = "UNKNOWN"
+        max_overlap = 0.0
+        
+        # Find the speaker segment that overlaps most with this text segment
+        for p_seg in pyannote_segments:
+            overlap = get_intersection(w_start, w_end, p_seg['start'], p_seg['end'])
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_speaker = p_seg['speaker']
+        
+        # If no strict overlap is found but text exists, default to the nearest previous speaker
+        if max_overlap == 0.0 and pyannote_segments:
+            logger.warning(f"No speaker overlap found for segment [{w_start}-{w_end}]. Assigning UNKNOWN.")
+
+        aligned_transcript.append({
+            "speaker_label": best_speaker,
+            "start_time": w_start,
+            "end_time": w_end,
+            "transcript_text": w_text
+        })
+
+    return aligned_transcript
