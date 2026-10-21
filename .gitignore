@@ -1,38 +1,13 @@
+# Meeting audio and generated outputs
+data/audio_files/*
+transcripts/*
+analysis/*
 
-# Secrets and environment variables
+# Local environment and secrets
 .env
 .env.*
 !.env.example
-
-# Python
-__pycache__/
-*.py[cod]
-.venv/
 venv/
-env/
-
-# macOS
+.venv/
+__pycache__/
 .DS_Store
-
-# Test and tooling caches
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Local databases and logs
-*.sqlite
-*.sqlite3
-*.db
-*.log
-
-# Uploaded or sensitive meeting data
-uploads/
-recordings/
-audio/
-transcripts_private/
-
-# Build output
-dist/
-build/

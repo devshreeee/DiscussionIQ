@@ -1,0 +1,3 @@
+"""
+DiscussionIQ application pages.
+"""
