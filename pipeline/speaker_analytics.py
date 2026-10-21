@@ -1,220 +1,91 @@
-from collections import defaultdict
+# pipeline/speaker_analytics.py
+import pandas as pd
+import logging
+from typing import List, Dict, Any
 
+logger = logging.getLogger(__name__)
 
-# ============================================================
-# SPEAKER ANALYTICS
-# ============================================================
-
-def calculate_speaker_analytics(
-    segments
-):
-    """
-    Calculate speaker participation statistics.
-
-    Expected segment format:
-
-    {
-        "speaker": "SPEAKER_00",
-        "start": 0.0,
-        "end": 4.5,
-        "text": "Hello everyone."
-    }
-
-    Returns:
-
-    [
-        {
-            "speaker": "SPEAKER_00",
-            "speaking_time_seconds": 120.5,
-            "segment_count": 10,
-            "word_count": 245,
-            "participation_percentage": 52.4
-        }
-    ]
-    """
-
-    if not segments:
-
-        return []
-
-    speaker_data = defaultdict(
-        lambda: {
-            "speaking_time_seconds": 0.0,
-            "segment_count": 0,
-            "word_count": 0
-        }
-    )
-
-    # --------------------------------------------------------
-    # Calculate raw statistics
-    # --------------------------------------------------------
-
-    for segment in segments:
-
-        speaker = segment.get(
-            "speaker",
-            "UNKNOWN"
-        )
-
-        start = float(
-            segment.get(
-                "start",
-                0.0
+class DiscussionAnalyticsEngine:
+    def __init__(self, transcript_segments: List[Dict[str, Any]], classifications: List[Dict[str, Any]]):
+        """
+        Initializes the analytics engine with transcript and classification data.
+        """
+        self.segments_df = pd.DataFrame(transcript_segments)
+        self.classifications_df = pd.DataFrame(classifications)
+        
+        # Merge segments with their classifications if data is present
+        if not self.segments_df.empty and not self.classifications_df.empty:
+            self.merged_df = pd.merge(
+                self.segments_df, 
+                self.classifications_df, 
+                left_on='id', 
+                right_on='segment_id', 
+                how='left'
             )
-        )
-
-        end = float(
-            segment.get(
-                "end",
-                0.0
-            )
-        )
-
-        text = segment.get(
-            "text",
-            ""
-        ).strip()
-
-        duration = max(
-            0.0,
-            end - start
-        )
-
-        word_count = len(
-            text.split()
-        )
-
-        speaker_data[
-            speaker
-        ][
-            "speaking_time_seconds"
-        ] += duration
-
-        speaker_data[
-            speaker
-        ][
-            "segment_count"
-        ] += 1
-
-        speaker_data[
-            speaker
-        ][
-            "word_count"
-        ] += word_count
-
-    # --------------------------------------------------------
-    # Total speaking time
-    # --------------------------------------------------------
-
-    total_speaking_time = sum(
-        item[
-            "speaking_time_seconds"
-        ]
-        for item in speaker_data.values()
-    )
-
-    # --------------------------------------------------------
-    # Build result
-    # --------------------------------------------------------
-
-    analytics = []
-
-    for speaker, data in speaker_data.items():
-
-        if total_speaking_time > 0:
-
-            participation = (
-                data[
-                    "speaking_time_seconds"
-                ]
-                /
-                total_speaking_time
-            ) * 100
-
         else:
+            self.merged_df = pd.DataFrame()
 
-            participation = 0.0
+    def get_participant_contributions(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Calculates speaking time and turn frequency for each participant.
+        """
+        if self.segments_df.empty:
+            return {}
 
-        analytics.append(
-            {
-                "speaker": speaker,
-
-                "speaking_time_seconds": round(
-                    data[
-                        "speaking_time_seconds"
-                    ],
-                    3
-                ),
-
-                "segment_count": data[
-                    "segment_count"
-                ],
-
-                "word_count": data[
-                    "word_count"
-                ],
-
-                "participation_percentage": round(
-                    participation,
-                    3
-                )
+        self.segments_df['duration'] = self.segments_df['end_time'] - self.segments_df['start_time']
+        
+        stats = {}
+        grouped = self.segments_df.groupby('speaker_label')
+        
+        for speaker, group in grouped:
+            stats[speaker] = {
+                "total_speaking_time_seconds": group['duration'].sum(),
+                "turn_count": len(group),
+                "average_turn_duration": group['duration'].mean()
             }
-        )
+        return stats
 
-    # --------------------------------------------------------
-    # Sort by speaking time
-    # --------------------------------------------------------
+    def get_category_distribution(self) -> Dict[str, int]:
+        """
+        Returns the frequency of each verified communication category.
+        """
+        if self.merged_df.empty or 'category_name' not in self.merged_df.columns:
+            return {}
+            
+        distribution = self.merged_df['category_name'].value_counts().to_dict()
+        return distribution
 
-    analytics.sort(
-        key=lambda item: item[
-            "speaking_time_seconds"
-        ],
-        reverse=True
-    )
+    def track_sentiment_trajectory(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Tracks the temporal evolution of sentiment per speaker.
+        """
+        if self.merged_df.empty or 'sentiment' not in self.merged_df.columns:
+            return {}
 
-    return analytics
+        trajectory = {}
+        # Sort chronologically
+        sorted_df = self.merged_df.sort_values(by='start_time')
+        
+        grouped = sorted_df.groupby('speaker_label')
+        for speaker, group in grouped:
+            # Map sentiments to numeric values for trend analysis if needed, 
+            # but returning raw timeline for now.
+            trajectory[speaker] = group[['start_time', 'sentiment', 'category_name']].to_dict('records')
+            
+        return trajectory
 
+    def extract_action_items(self) -> List[Dict[str, Any]]:
+        """
+        Extracts segments classified as 'Decision Making' or 'Strategising' 
+        that contain actionable evidence.
+        """
+        if self.merged_df.empty or 'category_name' not in self.merged_df.columns:
+            return []
 
-# ============================================================
-# SUMMARY STATISTICS
-# ============================================================
-
-def get_speaker_summary(
-    analytics
-):
-    """
-    Generate high-level speaker statistics.
-    """
-
-    if not analytics:
-
-        return {
-            "speaker_count": 0,
-            "total_speaking_time": 0.0,
-            "most_active_speaker": None
-        }
-
-    total_time = sum(
-        item[
-            "speaking_time_seconds"
-        ]
-        for item in analytics
-    )
-
-    most_active = analytics[0]
-
-    return {
-        "speaker_count": len(
-            analytics
-        ),
-
-        "total_speaking_time": round(
-            total_time,
-            3
-        ),
-
-        "most_active_speaker":
-            most_active[
-                "speaker"
-            ]
-    }
+        action_categories = ['Decision Making', 'Strategising']
+        action_df = self.merged_df[self.merged_df['category_name'].isin(action_categories)]
+        
+        # Filter for rows that actually have an evidence span extracted by the LLM
+        action_df = action_df.dropna(subset=['evidence_span'])
+        
+        return action_df[['speaker_label', 'start_time', 'category_name', 'evidence_span']].to_dict('records')
